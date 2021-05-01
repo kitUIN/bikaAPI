@@ -40,6 +40,13 @@ SORT_NAME = {"ua": "默认",
              "vd": "最多指名"}
 
 
+def run_time(fc):  # 测试运行时间
+    start = time.clock()
+    fc()
+    end = time.clock()
+    logger.debug(f'{fc.__name__}fcRunning time: {end - start} Seconds')
+
+
 class AIORefer:
     """提供http访问 基类
 
@@ -53,8 +60,6 @@ class AIORefer:
         self.uuid_s = str(uuid.uuid4()).replace("-", "")
         self.headers["nonce"] = self.uuid_s
         self.headers["authorization"] = token
-        if token == "":
-            asyncio.run(self.login())  # 登录获取token
 
     def _encrypt(self, url, method) -> str:
         """加密
@@ -65,7 +70,7 @@ class AIORefer:
         """
         ts = str(int(time.time()))
         self.headers["time"] = ts
-        raw = url.replace(GLOBAL_URL, "") + str(ts) + self.uuid_s + method + API_KEY
+        raw = url.replace(GLOBAL_URL, "") + ts + self.uuid_s + method + API_KEY
         raw = raw.lower()
         hc = hmac.new(SECRET_KEY.encode(), digestmod=hashlib.sha256)
         hc.update(raw.encode())
@@ -93,15 +98,24 @@ class AIORefer:
         :param get: 是否是get
         :return: dict
         """
+
         url = self._remake(url=GLOBAL_URL + api, params=params)
-        self.headers["signature"] = self._encrypt(url=url, method=("GET" if get else "POST"))
+        method = "GET" if get else "POST"
+        self.headers["signature"] = self._encrypt(url=url, method=method)
         async with httpx.AsyncClient(verify=False, timeout=1000, proxies=self.proxies) as client:
-            action = eval("client.get") if get else eval("client.post")  # get 与 post判断
-            if data:
-                res = await action(url=url, headers=self.headers, json=data)
+            if get:
+                if data:
+                    res = await client.get(url=url, headers=self.headers, json=data)
+                else:
+                    res = await client.get(url=url, headers=self.headers)
             else:
-                res = await action(url=url, headers=self.headers)
+                if data:
+                    res = await client.post(url=url, headers=self.headers, json=data)
+                else:
+                    res = await client.post(url=url, headers=self.headers)
+
             logger.info(res.json())
+
             if res.json()["code"] == 401 and res.json()["error"] == "1005":  # token过期重载函数
                 logger.error("TOKEN过期，正在尝试重新获取")
                 await self.login()
@@ -114,7 +128,6 @@ class AIORefer:
         """
         api = "auth/sign-in"
         send = {"email": self.account, "password": self.password}
-        self.headers["signature"] = self._encrypt(url=GLOBAL_URL + api, method="POST")
         res = await self.submit(api=api, data=send, get=False)
         if res["code"] == 200:
             self.headers["authorization"] = res["data"]["token"]
@@ -141,13 +154,11 @@ class AIOBikaAPI:
                  ):
         if account:
             refer.__init__(account, password, token, proxy)
-        if token is None:
-            asyncio.run(refer.login())
         self.category = None
         self.book_id = None
         self.eps_id = None
         self.eps_order = None
-        self.eps_orders = None
+        self.eps_counts = None
         self.page = None
         self.pages = None
 
@@ -243,7 +254,7 @@ class AIOBikaAPI:
         """漫画信息
 
         :param book_id: 漫画id(必须)
-        :param initial: 用于初始化BikaBlock(无需使用)
+        :param initial: 用于初始化BikaInfo(无需使用)
         :return: BikaInfo
         """
         api = f"comics/{book_id}"
@@ -259,7 +270,7 @@ class AIOBikaAPI:
 
         :param page: 页码
         :param book_id: 漫画id
-        :param initial: 用于初始化BikaBlock(无需使用)
+        :param initial: 用于初始化BikaEpisodes(无需使用)
         :return:BikaEpisodes
         """
         api = f"comics/{book_id}/eps"
@@ -366,9 +377,9 @@ class BikaPicture(AIOBikaAPI):
         # self.eps_orders: Optional[int] = eps_orders
         # self.page: Optional[int] = page
         # self.pages: Optional[int] = pages
-        self.id: Optional[str] = data["_id"]
-        self.name: Optional[str] = data["originalName"]
-        self.download_url: Optional[str] = f"{data['media']['fileServer']}/static/{data['media']['path']}"
+        self.pic_id: str = data["_id"]
+        self.pic_name: str = data["originalName"]
+        self.download_url: str = f"{data['media']['fileServer']}/static/{data['media']['path']}"
 
     def next_page(self):
         pass
@@ -405,34 +416,72 @@ class BikaPicture(AIOBikaAPI):
 """
 
 
-class BikaPagination:
+class BikaPagination(AIOBikaAPI):
     """漫画分页
 
     """
 
     def __init__(self, data: dict = None):
-        self.total: Optional[int] = data["data"]["pages"]["total"]
-        self.page: Optional[int] = data["data"]["pages"]["page"]
-        self.limit: Optional[int] = data["data"]["pages"]["limit"]
-        self.ep: Optional[str] = data["data"]["ep"]
+        super().__init__()
+        if data:
+            self.eps_id = data["_id"]
+            self.eps_title = data["title"]
+            self.eps_order = data["order"]
+            self.update_at = data["update_at"]
 
-    def initial(self, res):
-        pass
+        # ------------------ 自我构建后(initial) ------------------
+        self.children = None
+        self.pages = None
+        self.eps_order = None
+        self.eps_count = None
+        self.eps_id = None
+        self.eps_title = None
+
+    def initial(self, res=None):
+        self.children = [BikaPicture(x) for x in res["data"]["pages"]["docs"]]
+        self.pages = res["data"]["pages"]["total"]
+        self.eps_order = res["data"]["pages"]["page"]
+        self.eps_counts = res["data"]["pages"]["pages"]
+        self.eps_id = res["data"]["ep"]["_id"]
+        self.eps_title = res["data"]["ep"]["title"]
 
 
-class BikaEpisodes:
+    # TODO 上下级操作
+    # TODO 自动识别调用
+
+
+class BikaEpisodes(AIOBikaAPI):
     """漫画分话——>episodes
 
     """
 
-    def __init__(self, data: dict):
-        self.id: Optional[str] = data["_id"]
-        self.title: Optional[str] = data["title"]
-        self.order: Optional[str] = data["order"]
-        self.updated_at: Optional[str] = data["updated_at"]
+    def __init__(self, data: dict, eps_order=0):
+        super().__init__()
+        self.eps_count: int = data["epsCount"]
+        # ------------------ 自我构建后(initial) ------------------
+        self.children = None
+        self.eps_count = None
+        self.eps_counts = None
 
-    def initial(self, res):
-        pass
+    def initial(self, res=None):
+        self.children = [BikaPagination(x) for x in res["data"]["eps"]["docs"]]
+        self.eps_count = res["data"]["eps"]["page"]
+        self.eps_counts = res["data"]["eps"]["total"]
+
+    async def child(self, order: int = 0) -> Union[List[BikaPagination], BikaPagination]:
+        """获取第 order 的初始化后的子对象->分页
+
+        :param order: 序号 从1开始(0时为全部)
+        :return: 子对象 BikaPagination(order=0时为列表)
+        """
+        if order != 0:
+            res = await super().picture(book_id=self.book_id, page=self.children[order - 1].eps_count, initial=True)
+            self.children[order - 1].initial(res=res)
+            return self.children[order - 1]
+        else:  # TODO 全部
+            pass
+    # TODO 上下级操作
+    # TODO 自动识别调用
 
 
 """
@@ -470,8 +519,10 @@ class BikaInfo(AIOBikaAPI):
             self.book_id = data["_id"]
             self.title = data["title"]
             self.author = data["author"]
-            self.total_views = data["totalViews"]
-            self.total_likes = data["totalLikes"]
+            if 'totalViews' in data.keys():
+                self.total_views = data["totalViews"]
+            if 'isWeg' in data.keys():
+                self.total_likes = data["totalLikes"]
             self.pages_count = data["pagesCount"]
             self.eps_count = data["epsCount"]
             self.finished = data["finished"]
@@ -535,10 +586,14 @@ class BikaBlock(AIOBikaAPI):  # Comics
             self.title = data["title"]
             self.thumb_name = data["thumb"]["originalName"]
             self.thumb_url = f"{data['thumb']['fileServer']}/static/{data['thumb']['path']}"
-            self.is_web = data["isWeb"]
-            self.active = data["active"]
-            self.link = data["link"]
-
+            if 'isWeg' in data.keys():
+                self.is_web = data["isWeb"]
+            if 'link' in data.keys():
+                self.link = data["link"]
+            if 'active' in data.keys():
+                self.active = data["active"]
+            if 'id' in data.keys():
+                self.categories_id = data["_id"]
         # ------------------ 自我构建后(initial) ------------------
         self.total = None
         self.comic_page = None
