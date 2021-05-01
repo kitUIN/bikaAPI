@@ -155,12 +155,16 @@ class AIOBikaAPI:
         if account:
             refer.__init__(account, password, token, proxy)
         self.category = None
-        self.book_id = None
-        self.eps_id = None
-        self.eps_order = None
-        self.eps_counts = None
-        self.page = None
-        self.pages = None
+        self.ids = {
+            'book_id': "",
+            'eps_id': [],
+            'eps_order': 0,
+            'eps_counts': 0,
+            'eps_page': 0,
+            'eps_pages': 0,
+            'pic_page': 0,
+            'pic_pages': 0
+        }  # 上下移动索引
 
     @staticmethod
     async def categories():
@@ -268,7 +272,7 @@ class AIOBikaAPI:
     async def episodes(self, book_id: str = "", page: int = 1, initial=False):
         """漫画分话
 
-        :param page: 页码
+        :param page: 分页
         :param book_id: 漫画id
         :param initial: 用于初始化BikaEpisodes(无需使用)
         :return:BikaEpisodes
@@ -286,22 +290,22 @@ class AIOBikaAPI:
         """漫画本体
 
         :param book_id:漫画id
-        :param page:页码
+        :param page:分页
         :param eps_id:分话id
         :param initial: 用于初始化BikaBlock(无需使用)
         :return:BikaPicture
         """
         if book_id == "" and eps_id == 1 and page == 1:
-            book_id = self.book_id
-            eps_id = self.eps_id
-            page = self.page
+            book_id = self.ids["book_id"]
+            eps_id = self.ids["eps_id"]
+            page = self.ids["pic_page"]
         api = f"comics/{book_id}/order/{eps_id}/pages"
         params = {"page": str(page)}
         res = await refer.submit(api=api, params=params)
         if initial:
             return res
         else:
-            return BikaPagination().initial(res=res)
+            return BikaPagination().initial(res=res, ids=self.ids)
 
     async def downloader(self):  # 下载器
         pass
@@ -366,10 +370,9 @@ class BikaPicture(AIOBikaAPI):
 
     """
 
-    def __init__(self,
-                 data: dict = None,
-                 ):
+    def __init__(self, data: dict = None, ids=None):
         super().__init__()
+        super().ids = ids
         # self.category: List[str] = category
         # self.book_id: Optional[str] = book_id
         # self.eps_id: Optional[str] = eps_id
@@ -433,18 +436,23 @@ class BikaPagination(AIOBikaAPI):
         self.children = None
         self.pages = None
         self.eps_order = None
-        self.eps_count = None
+        self.eps_counts = None
         self.eps_id = None
         self.eps_title = None
+        self.origin = None
 
-    def initial(self, res=None):
-        self.children = [BikaPicture(x) for x in res["data"]["pages"]["docs"]]
+    def initial(self, res=None, ids=None):
+        super().ids = ids
+        self.origin = res
+        self.children = [BikaPicture(data=x, ids=super().ids) for x in res["data"]["pages"]["docs"]]
         self.pages = res["data"]["pages"]["total"]
         self.eps_order = res["data"]["pages"]["page"]
         self.eps_counts = res["data"]["pages"]["pages"]
         self.eps_id = res["data"]["ep"]["_id"]
         self.eps_title = res["data"]["ep"]["title"]
-
+        super().ids["eps_order"] = self.eps_order
+        super().ids["eps_counts"] = self.eps_counts
+        super().ids[f"eps_id{self.eps_order}"] = self.eps_id
 
     # TODO 上下级操作
     # TODO 自动识别调用
@@ -455,18 +463,25 @@ class BikaEpisodes(AIOBikaAPI):
 
     """
 
-    def __init__(self, data: dict, eps_order=0):
+    def __init__(self, data: dict = None):
         super().__init__()
-        self.eps_count: int = data["epsCount"]
+
+        if data:
+            self.eps_counts: int = data["epsCount"]
         # ------------------ 自我构建后(initial) ------------------
         self.children = None
-        self.eps_count = None
+        self.eps_order = None
         self.eps_counts = None
+        self.origin = None
 
-    def initial(self, res=None):
+    def initial(self, res=None, ids=None):
+        super().ids = ids
+        self.origin = res
         self.children = [BikaPagination(x) for x in res["data"]["eps"]["docs"]]
-        self.eps_count = res["data"]["eps"]["page"]
+        self.eps_order = res["data"]["eps"]["page"]
         self.eps_counts = res["data"]["eps"]["total"]
+        super().ids["eps_counts"] = self.eps_counts
+        super().ids["eps_order"] = self.eps_order
 
     async def child(self, order: int = 0) -> Union[List[BikaPagination], BikaPagination]:
         """获取第 order 的初始化后的子对象->分页
@@ -475,8 +490,9 @@ class BikaEpisodes(AIOBikaAPI):
         :return: 子对象 BikaPagination(order=0时为列表)
         """
         if order != 0:
-            res = await super().picture(book_id=self.book_id, page=self.children[order - 1].eps_count, initial=True)
-            self.children[order - 1].initial(res=res)
+            res = await super().picture(book_id=self.ids["book_id"], eps_id=self.children[order - 1].eps_id,
+                                        page=self.children[order - 1].eps_order, initial=True)
+            self.children[order - 1].initial(res=res, ids=super().ids)
             return self.children[order - 1]
         else:  # TODO 全部
             pass
@@ -514,7 +530,6 @@ class BikaInfo(AIOBikaAPI):
 
     def __init__(self, data: dict = None):
         super().__init__()
-        self.children = None
         if data:
             self.book_id = data["_id"]
             self.title = data["title"]
@@ -531,6 +546,7 @@ class BikaInfo(AIOBikaAPI):
             self.thumb_url = f"{data['thumb']['fileServer']}/static/{data['thumb']['path']}"
             self.likes_count = data["likesCount"]
         # ------------------ 自我构建后(initial) ------------------
+        self.children = None
         self.creator = None
         self.description = None
         self.chineseTeam = None
@@ -543,8 +559,11 @@ class BikaInfo(AIOBikaAPI):
         self.is_favourite = None
         self.is_liked = None
         self.comments_count = None
+        self.origin = None
 
-    def initial(self, res=None):
+    def initial(self, res=None, ids=None):
+        super().ids = ids
+        self.origin = res
         self.creator = res["data"]["comic"]["_creator"]
         self.description = res["data"]["comic"]["description"]
         self.chineseTeam = res["data"]["comic"]["chineseTeam"]
@@ -567,7 +586,8 @@ class BikaInfo(AIOBikaAPI):
         """
         if order != 0:
             res = await super().episodes(book_id=self.book_id, page=self.children[order - 1].eps_count, initial=True)
-            self.children[order - 1].initial(res=res)
+            super().ids["book_id"] = self.book_id
+            self.children[order - 1].initial(res=res, ids=super().ids)
             return self.children[order - 1]
         else:  # TODO 全部
             pass
@@ -600,8 +620,11 @@ class BikaBlock(AIOBikaAPI):  # Comics
         self.comic_pages = None
         self.comic_limit = None
         self.children = None
+        self.origin = None
 
-    def initial(self, res=None):
+    def initial(self, res=None, ids=None):
+        super().ids = ids
+        self.origin = res
         self.total = res["data"]["comics"]["total"]
         self.comic_page = res["data"]["comics"]["page"]
         self.comic_pages = res["data"]["comics"]["pages"]
@@ -616,7 +639,7 @@ class BikaBlock(AIOBikaAPI):  # Comics
         """
         if order != 0:
             res = await super().info(book_id=self.children[order - 1].id, initial=True)
-            self.children[order - 1].initial(res=res)
+            self.children[order - 1].initial(res=res, ids=super().ids)
             return self.children[order - 1]
         else:  # TODO 全部
             pass
@@ -629,11 +652,12 @@ class BikaCategories(AIOBikaAPI):
 
     """
 
-    def __init__(self, res: dict):
+    def __init__(self, res: dict, ids=None):
         super().__init__()
         self.children: List[BikaBlock] = [BikaBlock(x) for x in res["data"]["categories"]]
+        self.origin = res
 
-    async def child(self, order: int == 0) -> Union[List[BikaBlock], BikaBlock]:
+    async def child(self, order: int = 0) -> Union[List[BikaBlock], BikaBlock]:
         """获取第 order 的初始化后的子对象->分区
 
         :param order: 序号 从1开始(0时为全部)
