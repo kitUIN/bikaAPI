@@ -142,6 +142,7 @@ class BikaRaw:
         """
         pass
 
+
 class BikaPicture:
     """漫画本体——>Picture
 
@@ -253,17 +254,13 @@ class BikaAPI(Refer):
 
     def __init__(self,
                  account: Optional[str] = None,
-                 password: str = None,
-                 token: str = None,
-                 proxy: str = None
+                 password: Optional[str] = None,
+                 token: Optional[str] = None,
+                 proxy: Optional[str] = None
                  ):
         super().__init__(account, password, token, proxy)
 
     async def categories(self):
-        """主目录
-
-        :return: dict
-        """
         api = "categories"
         return BikaCategories(self, res=await super().submit(api=api))
 
@@ -278,19 +275,6 @@ class BikaAPI(Refer):
         return BikaComic(self, data=await super().submit(api=api, params=params))
 
     async def advanced_search(self, page: int = 1, keyword: str = "", categories: list = None, sort: str = "ua"):
-        """搜索
-
-        :param page: 页码(必须)
-        :param keyword: 关键词(必须)
-        :param categories: 分区(可选)
-        :param sort: (可选)
-            ua: 默认
-            dd: 新到旧
-            da: 旧到新
-            ld: 最多爱心
-            vd: 最多指名
-        :return:
-        """
         api = "comics/advanced-search"
         params = {
             "page": str(page)
@@ -305,46 +289,33 @@ class BikaAPI(Refer):
         return BikaComic(self, data=await super().submit(api=api, params=params, data=data, get=False))
 
     async def tags(self, page: int = 1, tag: str = "", sort: str = "ua"):  # 标签
-        api = f"comics?page={str(page)}&t={parse.quote(tag)}"
-        return await self.submit(api=api)
+        api = f"comics"
+        params = {
+            "page": str(page),
+            "t": parse.quote(tag)
+        }
+        logger.info(f"搜索标签:{tag},页码:{page},排序:{SORT_NAME[sort]}")
+        return BikaComic(self, data=await super().submit(api=api, params=params))
 
     async def info(self, book_id: str = ""):
-        """漫画信息
-
-        :param book_id: 漫画id
-        :return: dict
-        """
-        logger.info(f"漫画id:{book_id}")
         api = f"comics/{book_id}"
-        return await self.submit(api=api)
+        logger.info(f"查看漫画,漫画id:{book_id}")
+        return BikaInfo(self, data=await self.submit(api=api))
 
     async def episodes(self, book_id: str = "", page: int = 1):
-        """漫画分话
-
-        :param page: 页码
-        :param book_id: 漫画id
-        :return:
-        """
         api = f"comics/{book_id}/eps"
         params = {
             "page": str(page)
         }
         logger.info(f"漫画id:{book_id},页码:{page}")
-        return await self.submit(api=api, params=params)
+        return BikaEpisodes(self, data=await self.submit(api=api, params=params))
 
     async def picture(self, book_id: str = "", eps_id: int = 1, page: int = 1):
-        """漫画本体
-
-        :param book_id:
-        :param page:
-        :param eps_id
-        :return:
-        """
         api = f"comics/{book_id}/order/{eps_id}/pages"
         params = {
             "page": str(page)
         }
-        return await self.submit(api=api, params=params)
+        return BikaPagination(self, await self.submit(api=api, params=params))
 
     async def downloader(self):  # 下载器
         pass
@@ -498,6 +469,7 @@ class AIOBika(BikaAPI):
                 da: 旧到新
                 ld: 最多爱心
                 vd: 最多指名
+        :return:
         """
         return await super().comics(page=page, title=title, tag=tag, sort=sort)
 
@@ -515,22 +487,10 @@ class AIOBika(BikaAPI):
             vd: 最多指名
         :return:
         """
-        api = "comics/advanced-search"
-        params = {
-            "page": str(page)
-        }
-        data = {
-            "keyword": keyword,
-            "sort": sort
-        }
-        if categories:
-            data["categories"] = categories
-        logger.info(f"搜索:{keyword},页码:{page},分区:{categories},排序:{SORT_NAME[sort]}")
-        return await self.submit(api=api, params=params, data=data, get=False)
+        return await super().advanced_search(page=page, keyword=keyword, categories=categories, sort=sort)
 
     async def tags(self, page: int = 1, tag: str = "", sort: str = "ua"):  # 标签
-        api = f"comics?page={str(page)}&t={parse.quote(tag)}"
-        return await self.submit(api=api)
+        return await super().tags(page=page, tag=tag, sort=sort)
 
     async def info(self, book_id: str = ""):
         """漫画信息
@@ -538,9 +498,7 @@ class AIOBika(BikaAPI):
         :param book_id: 漫画id
         :return: dict
         """
-        logger.info(f"漫画id:{book_id}")
-        api = f"comics/{book_id}"
-        return await self.submit(api=api)
+        return await super().info(book_id=book_id)
 
     async def episodes(self, book_id: str = "", page: int = 1):
         """漫画分话
@@ -549,12 +507,7 @@ class AIOBika(BikaAPI):
         :param book_id: 漫画id
         :return:
         """
-        api = f"comics/{book_id}/eps"
-        params = {
-            "page": str(page)
-        }
-        logger.info(f"漫画id:{book_id},页码:{page}")
-        return await self.submit(api=api, params=params)
+        return await super().episodes(book_id=book_id, page=page)
 
     async def picture(self, book_id: str = "", eps_id: int = 1, page: int = 1):
         """漫画本体
@@ -564,8 +517,4 @@ class AIOBika(BikaAPI):
         :param eps_id
         :return:
         """
-        api = f"comics/{book_id}/order/{eps_id}/pages"
-        params = {
-            "page": str(page)
-        }
-        return await self.submit(api=api, params=params)
+        return await super().picture(book_id=book_id, eps_id=eps_id, page=page)
