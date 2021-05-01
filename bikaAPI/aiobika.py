@@ -139,11 +139,20 @@ class AIOBikaAPI:
                  token: Optional[str] = None,
                  proxy: Optional[str] = None
                  ):
-        refer.__init__(account, password, token, proxy)
+        if account:
+            refer.__init__(account, password, token, proxy)
         if token is None:
-            await refer.login()
+            asyncio.run(refer.login())
+        self.category = None
+        self.book_id = None
+        self.eps_id = None
+        self.eps_order = None
+        self.eps_orders = None
+        self.page = None
+        self.pages = None
 
-    async def categories(self):
+    @staticmethod
+    async def categories():
         """主目录
 
         :return: BikaCategories
@@ -151,8 +160,9 @@ class AIOBikaAPI:
         api = "categories"
         return BikaCategories(res=await refer.submit(api=api))
 
-    async def comics(self, title: str = "", page: int = 1, tag: str = "", sort: str = "ua"):
+    async def comics(self, title: str = "", page: int = 1, tag: str = "", sort: str = "ua", initial=False):
         """分区
+
 
         :param page: 分页，从1开始 (可选)
         :param title: 分区名字，categories里面的title，如"嗶咔漢化"(必须)
@@ -163,6 +173,7 @@ class AIOBikaAPI:
                 da: 旧到新
                 ld: 最多爱心
                 vd: 最多指名
+        :param initial: 用于初始化BikaBlock(无需使用)
         :return: BikaBlock
         """
         api = "comics"
@@ -174,7 +185,11 @@ class AIOBikaAPI:
         if tag:
             params["t"] = parse.quote(tag)
         logger.info(f"查看分区:{title},页码:{page},排序:{SORT_NAME[sort]}")
-        return BikaBlock(data=await refer.submit(api=api, params=params))
+        res = await refer.submit(api=api, params=params)
+        if initial:
+            return res
+        else:
+            return BikaBlock().initial(res=res)
 
     @staticmethod
     async def advanced_search(categories: list = None, sort: str = "ua", *, page: int = 1, keyword: str = ""):
@@ -200,7 +215,7 @@ class AIOBikaAPI:
         if categories:
             data["categories"] = categories
         logger.info(f"搜索:{keyword},页码:{page},分区:{categories},排序:{SORT_NAME[sort]}")
-        return BikaBlock(data=await refer.submit(api=api, params=params, data=data, get=False))
+        return BikaBlock().initial(res=await refer.submit(api=api, params=params, data=data, get=False))
 
     @staticmethod
     async def tags(page: int = 1, sort: str = "ua", *, tag: str = ""):
@@ -222,45 +237,60 @@ class AIOBikaAPI:
             "t": parse.quote(tag)
         }
         logger.info(f"搜索标签:{tag},页码:{page},排序:{SORT_NAME[sort]}")
-        return BikaBlock(data=await refer.submit(api=api, params=params))
+        return BikaBlock().initial(res=await refer.submit(api=api, params=params))
 
-    async def info(self, book_id: str = ""):
+    async def info(self, book_id: str = "", initial=False):
         """漫画信息
 
         :param book_id: 漫画id(必须)
+        :param initial: 用于初始化BikaBlock(无需使用)
         :return: BikaInfo
         """
         api = f"comics/{book_id}"
         logger.info(f"查看漫画,漫画id:{book_id}")
-        return BikaInfo(data=await refer.submit(api=api))
+        res = await refer.submit(api=api)
+        if initial:
+            return res
+        else:
+            return BikaInfo().initial(res=res)
 
-    async def episodes(self, book_id: str = "", page: int = 1):
+    async def episodes(self, book_id: str = "", page: int = 1, initial=False):
         """漫画分话
 
         :param page: 页码
         :param book_id: 漫画id
+        :param initial: 用于初始化BikaBlock(无需使用)
         :return:BikaEpisodes
         """
         api = f"comics/{book_id}/eps"
         params = {"page": str(page)}
         logger.info(f"漫画id:{book_id},页码:{page}")
-        return BikaEpisodes(data=await refer.submit(api=api, params=params))
+        res = await refer.submit(api=api, params=params)
+        if initial:
+            return res
+        else:
+            return BikaEpisodes().initial(res=res)
 
-    async def picture(self, book_id: str = "", eps_id: int = 1, page: int = 1):
+    async def picture(self, book_id: str = "", eps_id: int = 1, page: int = 1, initial=False):
         """漫画本体
 
         :param book_id:漫画id
         :param page:页码
         :param eps_id:分话id
+        :param initial: 用于初始化BikaBlock(无需使用)
         :return:BikaPicture
         """
-        if book_id== "" and eps_id == 1 and page == 1:
+        if book_id == "" and eps_id == 1 and page == 1:
             book_id = self.book_id
             eps_id = self.eps_id
             page = self.page
         api = f"comics/{book_id}/order/{eps_id}/pages"
         params = {"page": str(page)}
-        return BikaPagination(await refer.submit(api=api, params=params))
+        res = await refer.submit(api=api, params=params)
+        if initial:
+            return res
+        else:
+            return BikaPagination().initial(res=res)
 
     async def downloader(self):  # 下载器
         pass
@@ -307,15 +337,41 @@ class BikaRaw:
         pass
 
 
-class BikaPicture:
+class BikaPicture(AIOBikaAPI):
     """漫画本体——>Picture
+
+    可用方法:
+
+    pre_page(): 上一张
+
+    next_page():下一张
+
+    download(): 下载当前页
+
+    categories(): 主目录
+
+    comics(title=""): 前往分区
+
 
     """
 
-    def __init__(self, data: dict, book_id, ep_id):
+    def __init__(self,
+                 data: dict = None,
+                 ):
+        super().__init__()
+        # self.category: List[str] = category
+        # self.book_id: Optional[str] = book_id
+        # self.eps_id: Optional[str] = eps_id
+        # self.eps_order: Optional[int] = eps_order
+        # self.eps_orders: Optional[int] = eps_orders
+        # self.page: Optional[int] = page
+        # self.pages: Optional[int] = pages
         self.id: Optional[str] = data["_id"]
         self.name: Optional[str] = data["originalName"]
         self.download_url: Optional[str] = f"{data['media']['fileServer']}/static/{data['media']['path']}"
+
+    def next_page(self):
+        pass
 
 
 """
@@ -354,11 +410,14 @@ class BikaPagination:
 
     """
 
-    def __init__(self, data: dict):
+    def __init__(self, data: dict = None):
         self.total: Optional[int] = data["data"]["pages"]["total"]
         self.page: Optional[int] = data["data"]["pages"]["page"]
         self.limit: Optional[int] = data["data"]["pages"]["limit"]
         self.ep: Optional[str] = data["data"]["ep"]
+
+    def initial(self, res):
+        pass
 
 
 class BikaEpisodes:
@@ -372,8 +431,18 @@ class BikaEpisodes:
         self.order: Optional[str] = data["order"]
         self.updated_at: Optional[str] = data["updated_at"]
 
+    def initial(self, res):
+        pass
+
 
 """
+def __info__(self):  # 格式化输出
+    return logger.info(json.dumps(self.raw, indent=4, ensure_ascii=False))
+
+
+def __repr__(self):
+    return f'<BikaEpisodes(episodes={len(self.raw)},pages={str(self.pages)}>'
+
     def child(self, pagination: Optional[int] = None) -> Union[List[BikaPagination], BikaPagination]:
         获取分页
         :param pagination: 获取分页位置，默认获取全部，可指定分页
@@ -389,93 +458,137 @@ class BikaEpisodes:
 """
 
 
-def __info__(self):  # 格式化输出
-    return logger.info(json.dumps(self.raw, indent=4, ensure_ascii=False))
-
-
-def __repr__(self):
-    return f'<BikaEpisodes(episodes={len(self.raw)},pages={str(self.pages)}>'
-
-
-class BikaInfo:
+class BikaInfo(AIOBikaAPI):
     """漫画具体信息——>BikaInfo
 
     """
 
-    def __init__(self, data: dict):
-        self.id = data["data"]["comic"]["_id"]
-        self.creator = data["data"]["comic"]["_creator"]
-        self.title = data["data"]["comic"]["title"]
-        self.description = data["data"]["comic"]["description"]
-        self.thumb_name = data["data"]["comic"]["thumb"]["originalName"]
-        self.thumb_url = f"{data['data']['comic']['thumb']['fileServer']}/static/{data['data']['comic']['thumb']['path']}"
-        self.author = data["data"]["comic"]["author"]
-        self.chineseTeam = data["data"]["comic"]["chineseTeam"]
-        self.categories = data["categories"]
-        self.tags = data["data"]["comic"]["tags"]
-        self.pagesCount = data["data"]["comic"]["pagesCount"]
-        self.epsCount = data["data"]["comic"]["epsCount"]
-        self.finished = data["data"]["comic"]["finished"]
-        self.updated_at = data["data"]["comic"]["updated_at"]
-        self.created_at = data["data"]["comic"]["created_at"]
-        self.allowDownload = data["data"]["comic"]["allowDownload"]
-        self.allowComment = data["data"]["comic"]["allowComment"]
-        self.total_likes = data["data"]["comic"]["totalLikes"]
-        self.total_views = data["data"]["comic"]["totalViews"]
-        self.viewsCount = data["data"]["comic"]["viewsCount"]
-        self.likesCount = data["data"]["comic"]["likesCount"]
-        self.is_favourite = data["data"]["comic"]["isFavourite"]
-        self.is_liked = data["data"]["comic"]["isLiked"]
-        self.comments_count = data["data"]["comic"]["commentsCount"]
+    def __init__(self, data: dict = None):
+        super().__init__()
+        self.children = None
+        if data:
+            self.book_id = data["_id"]
+            self.title = data["title"]
+            self.author = data["author"]
+            self.total_views = data["totalViews"]
+            self.total_likes = data["totalLikes"]
+            self.pages_count = data["pagesCount"]
+            self.eps_count = data["epsCount"]
+            self.finished = data["finished"]
+            self.categories = data["categories"]
+            self.thumb_name = data["thumb"]["originalName"]
+            self.thumb_url = f"{data['thumb']['fileServer']}/static/{data['thumb']['path']}"
+            self.likes_count = data["likesCount"]
+        # ------------------ 自我构建后(initial) ------------------
+        self.creator = None
+        self.description = None
+        self.chineseTeam = None
+        self.tags = None
+        self.updated_at = None
+        self.created_at = None
+        self.allowDownload = None
+        self.allowComment = None
+        self.viewsCount = None
+        self.is_favourite = None
+        self.is_liked = None
+        self.comments_count = None
+
+    def initial(self, res=None):
+        self.creator = res["data"]["comic"]["_creator"]
+        self.description = res["data"]["comic"]["description"]
+        self.chineseTeam = res["data"]["comic"]["chineseTeam"]
+        self.tags = res["data"]["comic"]["tags"]
+        self.updated_at = res["data"]["comic"]["updated_at"]
+        self.created_at = res["data"]["comic"]["created_at"]
+        self.allowDownload = res["data"]["comic"]["allowDownload"]
+        self.allowComment = res["data"]["comic"]["allowComment"]
+        self.viewsCount = res["data"]["comic"]["viewsCount"]
+        self.is_favourite = res["data"]["comic"]["isFavourite"]
+        self.is_liked = res["data"]["comic"]["isLiked"]
+        self.comments_count = res["data"]["comic"]["commentsCount"]
+        self.children = [BikaEpisodes(x) for x in res["data"]["comics"]["docs"]]
+
+    async def child(self, order: int = 0) -> Union[List[BikaEpisodes], BikaEpisodes]:
+        """获取第 order 的初始化后的子对象->分话
+
+        :param order: 序号 从1开始(0时为全部)
+        :return: 子对象 BikaEpisodes(order=0时为列表)
+        """
+        if order != 0:
+            res = await super().episodes(book_id=self.book_id, page=self.children[order - 1].eps_count, initial=True)
+            self.children[order - 1].initial(res=res)
+            return self.children[order - 1]
+        else:  # TODO 全部
+            pass
+    # TODO 上下级操作
+    # TODO 自动识别调用
 
 
-class BikaComic:
-    """漫画信息——>Comic
-
-    """
-
-    def __init__(self, data: dict):
-        self.id = data["_id"]
-        self.title = data["title"]
-        self.thumb_name = data["thumb"]["originalName"]
-        self.thumb_url = f"{data['thumb']['fileServer']}/static/{data['thumb']['path']}"
-        self.description = data["description"]
-        self.categories = data["categories"]
-        self.updated_at = data["updated_at"]
-        self.created_at = data["created_at"]
-        self.finished = data["finished"]
-        self.tags = data["tags"]
-        self.total_likes = data["totalLikes"]
-        self.total_views = data["totalViews"]
-        self.likes_count = data["likesCount"]
-
-
-class BikaBlock:  # Comics
+class BikaBlock(AIOBikaAPI):  # Comics
     """搜索与分区——>Block(Comics)
 
     """
 
-    def __init__(self, data: dict):
-        self.total = data["data"]["comics"]["total"]
-        self.page = data["data"]["comics"]["page"]
-        self.pages = data["data"]["comics"]["pages"]
-        self.limit = data["data"]["comics"]["limit"]
+    def __init__(self, data: dict = None):
+        super().__init__()
+        if data:
+            self.title = data["title"]
+            self.thumb_name = data["thumb"]["originalName"]
+            self.thumb_url = f"{data['thumb']['fileServer']}/static/{data['thumb']['path']}"
+            self.is_web = data["isWeb"]
+            self.active = data["active"]
+            self.link = data["link"]
 
-    # def __info__(self):  # 格式化输出
-    # return logger.info(json.dumps(self.raw, indent=4, ensure_ascii=False))
+        # ------------------ 自我构建后(initial) ------------------
+        self.total = None
+        self.comic_page = None
+        self.comic_pages = None
+        self.comic_limit = None
+        self.children = None
 
-    def __repr__(self):
-        return f'<BikaBlock(total={str(self.total)},page={str(self.page)}/{str(self.pages)}>'
+    def initial(self, res=None):
+        self.total = res["data"]["comics"]["total"]
+        self.comic_page = res["data"]["comics"]["page"]
+        self.comic_pages = res["data"]["comics"]["pages"]
+        self.comic_limit = res["data"]["comics"]["limit"]
+        self.children = [BikaInfo(x) for x in res["data"]["comics"]["docs"]]
+
+    async def child(self, order: int = 0) -> Union[List[BikaInfo], BikaInfo]:
+        """获取第 order 的初始化后的子对象->漫画信息
+
+        :param order: 序号 从1开始(0时为全部)
+        :return: 子对象 BikaBlock(order=0时为列表)
+        """
+        if order != 0:
+            res = await super().info(book_id=self.children[order - 1].id, initial=True)
+            self.children[order - 1].initial(res=res)
+            return self.children[order - 1]
+        else:  # TODO 全部
+            pass
+    # TODO 上下级操作
+    # TODO 自动识别调用
 
 
-class BikaCategories:
+class BikaCategories(AIOBikaAPI):
     """主目录——>Categories
 
     """
 
-    def __init__(self, res: dict, book_id, eps_id, page):
-        # super().__init__(book_id=book_id, eps_id=eps_id, page=page, API=API)
-        self.raw = res["data"]["categories"]
+    def __init__(self, res: dict):
+        super().__init__()
+        self.children: List[BikaBlock] = [BikaBlock(x) for x in res["data"]["categories"]]
 
-    def slice(self):
-        pass
+    async def child(self, order: int == 0) -> Union[List[BikaBlock], BikaBlock]:
+        """获取第 order 的初始化后的子对象->分区
+
+        :param order: 序号 从1开始(0时为全部)
+        :return: 子对象 BikaBlock(order=0时为列表)
+        """
+        if order != 0:
+            res = await super().comics(title=self.children[order - 1].title, initial=True)
+            self.children[order - 1].initial(res=res)
+            return self.children[order - 1]
+        else:  # TODO 全部
+            pass
+    # TODO 上下级操作
+    # TODO 自动识别调用
